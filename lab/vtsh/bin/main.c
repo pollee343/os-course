@@ -167,6 +167,7 @@ int main(void) {
   char* line = NULL;
   size_t cap = 0;
 
+
   while (1) {
     fprintf(stderr, "vtsh> ");
     fflush(stderr);
