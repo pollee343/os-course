@@ -13,6 +13,8 @@
 #define RNG_SEED 12345U
 #define BYTES_PER_MEBIBYTE (1024.0 * 1024.0)
 
+static const uint32_t LOW_BYTE_MASK = 0xFFU;
+
 static uint32_t crc32_table[CRC_TABLE_SIZE];
 
 static void crc32_make_table(void) {
@@ -32,7 +34,7 @@ static inline uint32_t crc32_update(
   const uint8_t* p = (const uint8_t*)data;
   crc = ~crc;
   for (size_t i = 0; i < len; i++) {
-    crc = crc32_table[(crc ^ p[i]) & 0xFFU] ^ (crc >> BITS_PER_BYTE);
+    crc = crc32_table[(crc ^ p[i]) & LOW_BYTE_MASK] ^ (crc >> BITS_PER_BYTE);
   }
   return ~crc;
 }
@@ -56,11 +58,10 @@ static void fill_fragment(uint8_t* buf, size_t n, uint32_t* seed) {
   }
 }
 
-static double exec_seconds(struct timespec start, struct timespec finish) {
-  const double NANOSECONDS_IN_SECOND = 1e9;
-  long long ns = (finish.tv_sec - start.tv_sec) * 1000000000LL +
-                 (finish.tv_nsec - start.tv_nsec);
-  return (double)ns / NANOSECONDS_IN_SECOND;
+static long long exec_time(struct timespec start, struct timespec finish) {
+  const long long NANOSECONDS_IN_SECOND = (long long)1e9;
+  return (finish.tv_sec - start.tv_sec) * NANOSECONDS_IN_SECOND +
+         (finish.tv_nsec - start.tv_nsec);
 }
 
 int main(void) {
@@ -89,7 +90,7 @@ int main(void) {
   clock_gettime(CLOCK_MONOTONIC, &finish);
   free(buffer);
 
-  double seconds = exec_seconds(start, finish);
+  double seconds = (double)exec_time(start, finish);
   double mib = (double)total_bytes / BYTES_PER_MEBIBYTE;
   double mibps = seconds > 0.0 ? mib / seconds : 0.0;
 

@@ -14,3 +14,5 @@ target_link_libraries(
     PRIVATE
     libvtsh
 )
+
+add_subdirectory(loaders)
