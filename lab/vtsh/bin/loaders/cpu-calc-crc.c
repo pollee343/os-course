@@ -4,14 +4,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define CRC_TABLE_SIZE 256U
 #define BITS_PER_BYTE 8U
-#define FRAGMENT_COUNT 2000U
+#define DEFAULT_FRAGMENT_COUNT 2000U
+#define DEFAULT_ITERATIONS 1U
 #define FRAGMENT_LENGTH 4096U
 #define RNG_SEED 12345U
 #define BYTES_PER_MEBIBYTE (1024.0 * 1024.0)
+#define DECIMAL_BASE 10
 
 static const uint32_t LOW_BYTE_MASK = 0xFFU;
 
@@ -31,10 +32,10 @@ static void crc32_make_table(void) {
 static inline uint32_t crc32_update(
     uint32_t crc, const void* data, size_t len
 ) {
-  const uint8_t* p = (const uint8_t*)data;
+  const uint8_t* ptr = (const uint8_t*)data;
   crc = ~crc;
   for (size_t i = 0; i < len; i++) {
-    crc = crc32_table[(crc ^ p[i]) & LOW_BYTE_MASK] ^ (crc >> BITS_PER_BYTE);
+    crc = crc32_table[(crc ^ ptr[i]) & LOW_BYTE_MASK] ^ (crc >> BITS_PER_BYTE);
   }
   return ~crc;
 }
@@ -58,17 +59,52 @@ static void fill_fragment(uint8_t* buf, size_t n, uint32_t* seed) {
   }
 }
 
-static long long exec_time(struct timespec start, struct timespec finish) {
-  const long long NANOSECONDS_IN_SECOND = (long long)1e9;
-  return (finish.tv_sec - start.tv_sec) * NANOSECONDS_IN_SECOND +
-         (finish.tv_nsec - start.tv_nsec);
-}
+int main(int argc, char** argv) {
+  size_t fragment_count = DEFAULT_FRAGMENT_COUNT;
+  size_t iterations = DEFAULT_ITERATIONS;
 
-int main(void) {
+  if (argc > 3) {
+    int print_result =
+        fprintf(stderr, "Usage: %s [fragments] [iterations]\n", argv[0]);
+    if (print_result < 0) {
+      perror("fprintf usage");
+    }
+    return 1;
+  }
+
+  if (argc >= 2) {
+    char* endptr = NULL;
+    unsigned long long val = strtoull(argv[1], &endptr, DECIMAL_BASE);
+    if (*endptr != '\0' || val == 0) {
+      int print_result =
+          fprintf(stderr, "Invalid fragments value: %s\n", argv[1]);
+      if (print_result < 0) {
+        perror("fprintf fragments");
+      }
+      return 1;
+    }
+    fragment_count = (size_t)val;
+  }
+
+  if (argc == 3) {
+    char* endptr = NULL;
+    unsigned long long val = strtoull(argv[2], &endptr, DECIMAL_BASE);
+    if (*endptr != '\0' || val == 0) {
+      int print_result =
+          fprintf(stderr, "Invalid iterations value: %s\n", argv[2]);
+      if (print_result < 0) {
+        perror("fprintf iterations");
+      }
+      return 1;
+    }
+    iterations = (size_t)val;
+  }
+
   crc32_make_table();
 
   uint8_t* buffer = malloc(FRAGMENT_LENGTH);
   if (!buffer) {
+    perror("malloc buffer");
     return 1;
   }
 
@@ -76,31 +112,24 @@ int main(void) {
   uint32_t crc = 0;
   size_t total_bytes = 0;
 
-  struct timespec start;
-  struct timespec finish;
-  clock_gettime(CLOCK_MONOTONIC, &start);
-
-  for (size_t i = 0; i < FRAGMENT_COUNT; i++) {
-    (void)lcg_next(&seed);
-    fill_fragment(buffer, FRAGMENT_LENGTH, &seed);
-    crc = crc32_update(crc, buffer, FRAGMENT_LENGTH);
-    total_bytes += FRAGMENT_LENGTH;
+  for (size_t it = 0; it < iterations; ++it) {
+    for (size_t i = 0; i < fragment_count; ++i) {
+      lcg_next(&seed);
+      fill_fragment(buffer, FRAGMENT_LENGTH, &seed);
+      crc = crc32_update(crc, buffer, FRAGMENT_LENGTH);
+      total_bytes += FRAGMENT_LENGTH;
+    }
   }
-
-  clock_gettime(CLOCK_MONOTONIC, &finish);
-  free(buffer);
-
-  double seconds = (double)exec_time(start, finish);
-  double mib = (double)total_bytes / BYTES_PER_MEBIBYTE;
-  double mibps = seconds > 0.0 ? mib / seconds : 0.0;
 
   printf("crc32=0x%08" PRIx32 "\n", crc);
   printf(
-      "bytes=%zu fragments=%u frag_len=%u\n",
+      "bytes=%zu fragments=%zu iterations=%zu frag_len=%u\n",
       total_bytes,
-      FRAGMENT_COUNT,
+      fragment_count,
+      iterations,
       FRAGMENT_LENGTH
   );
-  printf("time=%.3f s throughput=%.2f MiB/s\n", seconds, mibps);
+
+  free(buffer);
   return 0;
 }

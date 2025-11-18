@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
+
 #include <errno.h>
 #include <limits.h>
 #include <sched.h>
@@ -17,6 +18,10 @@
 #define MEGABYTE 1048576
 #define MAX_SEGS_OR_ARGS 128
 #define SEG_BUF 4096
+
+struct child_ctx {
+  char** argv;
+};
 
 static long long exec_time(struct timespec start, struct timespec finish) {
   const long long NANOSECONDS_IN_SECOND = (long long)1e9;
@@ -41,21 +46,52 @@ static void trim(char* str) {
 
 static void split_words(char* line, char** argv, int* argc, int maxv) {
   *argc = 0;
-  char* saveptr = NULL;
-  char* word = strtok_r(line, " \t\r", &saveptr);
-  while (word && *argc < maxv - 1) {
-    argv[(*argc)++] = word;
-    word = strtok_r(NULL, " \t\r", &saveptr);
+  char* ptr = line;
+
+  while (*ptr && *argc < maxv - 1) {
+    while (*ptr == ' ' || *ptr == '\t' || *ptr == '\r') {
+      ++ptr;
+    }
+    if (!*ptr || *ptr == '\n') {
+      break;
+    }
+
+    char* start = ptr;
+    char* out = ptr;
+    int in_single = 0;
+    int in_double = 0;
+
+    while (*ptr && *ptr != '\n') {
+      if (!in_single && *ptr == '"') {
+        in_double = !in_double;
+        ++ptr;
+        continue;
+      }
+      if (!in_double && *ptr == '\'') {
+        in_single = !in_single;
+        ++ptr;
+        continue;
+      }
+
+      if (!in_single && !in_double &&
+          (*ptr == ' ' || *ptr == '\t' || *ptr == '\r')) {
+        ++ptr;
+        break;
+      }
+
+      *out++ = *ptr++;
+    }
+
+    *out = '\0';
+    argv[(*argc)++] = start;
   }
+
   argv[*argc] = NULL;
 }
 
-struct child_ctx {
-  char** argv;
-};
-
 static int child_proc_func(void* arg) {
   struct child_ctx* ctx = (struct child_ctx*)arg;
+
   if (ctx->argv[0] && strcmp(ctx->argv[0], "./shell") == 0) {
     char self[PATH_MAX];
     ssize_t path_len = readlink("/proc/self/exe", self, sizeof(self) - 1);
@@ -63,28 +99,31 @@ static int child_proc_func(void* arg) {
       self[path_len] = '\0';
       ctx->argv[0] = self;
       execv(self, ctx->argv);
+
+      perror("execv");
+      _exit(COMMAND_NOT_FOUND);
     }
   }
 
   execvp(ctx->argv[0], ctx->argv);
 
-  if (errno == COMMAND_NOT_FOUND) {
-    (void)!write(
-        STDOUT_FILENO, "Command not found\n", sizeof("Command not found\n") - 1
-    );
-    _exit(COMMAND_NOT_FOUND);
+  if (errno == ENOENT) {
+    const char msg[] = "\x1b[31mCommand not found\x1b[0m\n";
+    (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
   } else {
-    int err = errno;
-    static const int ERR_TEXT_BUFFER_SIZE = 256;
-    char buf[ERR_TEXT_BUFFER_SIZE];
-    strerror_r(err, buf, sizeof(buf));
-
-    dprintf(STDERR_FILENO, "execvp: %s: %s\n", ctx->argv[0], buf);
-    _exit(COMMAND_NOT_FOUND);
+    perror("execvp");
   }
+
+  _exit(COMMAND_NOT_FOUND);
 }
 
 static int run_argv(char** argv) {
+  struct timespec start;
+  struct timespec finish;
+  if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
+    perror("clock_gettime");
+  }
+
   if (!argv[0]) {
     return 0;
   }
@@ -94,6 +133,7 @@ static int run_argv(char** argv) {
   }
 
   if (strcmp(argv[0], "cd") == 0) {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
     const char* dir = argv[1] ? argv[1] : getenv("HOME");
     if (!dir) {
       dir = ".";
@@ -104,10 +144,6 @@ static int run_argv(char** argv) {
     }
     return 0;
   }
-
-  struct timespec start;
-  struct timespec finish;
-  clock_gettime(CLOCK_MONOTONIC, &start);
 
   const size_t STACK_SIZE = MEGABYTE;
 
@@ -131,19 +167,25 @@ static int run_argv(char** argv) {
   if (waitpid(pid, &status, 0) == -1) {
     perror("waitpid");
   }
-  clock_gettime(CLOCK_MONOTONIC, &finish);
 
-  unsigned ustatus = (unsigned)status;
+  free(stack);
 
-  const double MICROSECONDS_IN_SECOND = 1e6;
-  double exec_time_val =
-      (double)exec_time(start, finish) / MICROSECONDS_IN_SECOND;
-
-  if (WIFEXITED(ustatus) || WIFSIGNALED(ustatus) || WIFSTOPPED(ustatus)) {
-    (void)fprintf(stderr, "time=%.3f ms\n", exec_time_val);
+  if (clock_gettime(CLOCK_MONOTONIC, &finish) != 0) {
+    perror("clock_gettime");
   }
 
-  int res = WIFEXITED(ustatus) ? WEXITSTATUS(ustatus) : COMMAND_NOT_FOUND;
+  enum { NANOSECONDS_PER_MILLISECOND = 1000000LL };
+  double exec_time_ms =
+      (double)exec_time(start, finish) / (double)NANOSECONDS_PER_MILLISECOND;
+
+  // NOLINTNEXTLINE(hicpp-signed-bitwise)
+  if (WIFEXITED(status) || WIFSIGNALED(status) || WIFSTOPPED(status)) {
+    (void)fprintf(stderr, "\x1b[3;90mtime=%.3f ms\x1b[0m\n", exec_time_ms);
+  }
+
+  // NOLINTNEXTLINE(hicpp-signed-bitwise)
+  int res = WIFEXITED(status) ? WEXITSTATUS(status) : COMMAND_NOT_FOUND;
+  return res;
 }
 
 static int parse_and_segments(char* line, char* segs[], int maxseg) {
@@ -193,13 +235,12 @@ static int parse_and_segments(char* line, char* segs[], int maxseg) {
 int main(void) {
   (void)setvbuf(stdin, NULL, _IONBF, 0);
   (void)setvbuf(stdout, NULL, _IONBF, 0);
-  (void)signal(SIGINT, SIG_IGN);
 
   char* line = NULL;
   size_t cap = 0;
 
   while (1) {
-    (void)fprintf(stderr, "vtsh> ");
+    (void)fprintf(stderr, "\x1b[32mvtsh> \x1b[0m");
     (void)fflush(stderr);
     ssize_t read_len = getline(&line, &cap, stdin);
     if (read_len < 0) {
