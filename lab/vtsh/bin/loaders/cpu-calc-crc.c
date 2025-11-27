@@ -11,7 +11,6 @@
 #define DEFAULT_ITERATIONS 1U
 #define FRAGMENT_LENGTH 4096U
 #define RNG_SEED 12345U
-#define BYTES_PER_MEBIBYTE (1024.0 * 1024.0)
 #define DECIMAL_BASE 10
 
 static const uint32_t LOW_BYTE_MASK = 0xFFU;
@@ -100,36 +99,27 @@ int main(int argc, char** argv) {
     iterations = (size_t)val;
   }
 
-  crc32_make_table();
+  while (iterations > 0) {
+    iterations--;
 
-  uint8_t* buffer = malloc(FRAGMENT_LENGTH);
-  if (!buffer) {
-    perror("malloc buffer");
-    return 1;
-  }
+    crc32_make_table();
 
-  uint32_t seed = RNG_SEED;
-  uint32_t crc = 0;
-  size_t total_bytes = 0;
+    uint8_t* buffer = malloc(FRAGMENT_LENGTH);
+    if (!buffer) {
+      perror("malloc buffer");
+      return 1;
+    }
 
-  for (size_t it = 0; it < iterations; ++it) {
+    uint32_t seed = RNG_SEED;
+    uint32_t crc = 0;
+
     for (size_t i = 0; i < fragment_count; ++i) {
       lcg_next(&seed);
       fill_fragment(buffer, FRAGMENT_LENGTH, &seed);
       crc = crc32_update(crc, buffer, FRAGMENT_LENGTH);
-      total_bytes += FRAGMENT_LENGTH;
     }
+
+    free(buffer);
   }
-
-  printf("crc32=0x%08" PRIx32 "\n", crc);
-  printf(
-      "bytes=%zu fragments=%zu iterations=%zu frag_len=%u\n",
-      total_bytes,
-      fragment_count,
-      iterations,
-      FRAGMENT_LENGTH
-  );
-
-  free(buffer);
   return 0;
 }

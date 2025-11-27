@@ -108,7 +108,9 @@ static int child_proc_func(void* arg) {
   execvp(ctx->argv[0], ctx->argv);
 
   if (errno == ENOENT) {
-    const char msg[] = "\x1b[31mCommand not found\x1b[0m\n";
+    const char msg[] =
+        "\x1b[31mCommand not found\x1b[0m\n";  //красный жирный шрифт. текст -
+                                               //'Command not found'
     (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
   } else {
     perror("execvp");
@@ -180,7 +182,9 @@ static int run_argv(char** argv) {
 
   // NOLINTNEXTLINE(hicpp-signed-bitwise)
   if (WIFEXITED(status) || WIFSIGNALED(status) || WIFSTOPPED(status)) {
-    (void)fprintf(stderr, "\x1b[3;90mtime=%.3f ms\x1b[0m\n", exec_time_ms);
+    (void)fprintf(
+        stderr, "\x1b[3;90mtime=%.3f ms\x1b[0m\n", exec_time_ms
+    );  //серый курсив, текст - 'time= ...'
   }
 
   // NOLINTNEXTLINE(hicpp-signed-bitwise)
@@ -240,7 +244,7 @@ int main(void) {
   size_t cap = 0;
 
   while (1) {
-    (void)fprintf(stderr, "\x1b[32mvtsh> \x1b[0m");
+    (void)fprintf(stderr, "\x1b[32mvtsh> \x1b[0m");  //зеленый, текст - 'vtsh> '
     (void)fflush(stderr);
     ssize_t read_len = getline(&line, &cap, stdin);
     if (read_len < 0) {

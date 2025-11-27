@@ -78,6 +78,7 @@ static int do_join_files(
     return 1;
   }
 
+  // отключение буферизации для file_A
   if (setvbuf(file_A, NULL, _IONBF, 0) != 0) {
     perror("setvbuf file_A");
   }
@@ -89,6 +90,7 @@ static int do_join_files(
     return 1;
   }
 
+  // отключение буферизации для file_B
   if (setvbuf(file_B, NULL, _IONBF, 0) != 0) {
     perror("setvbuf file_B");
   }
@@ -146,6 +148,7 @@ static int do_join_files(
     return 1;
   }
 
+  // отключение буферизации для file_out
   if (setvbuf(file_out, NULL, _IONBF, 0) != 0) {
     perror("setvbuf file_out");
   }

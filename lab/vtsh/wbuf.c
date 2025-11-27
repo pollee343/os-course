@@ -1,36 +1,18 @@
-#define _POSIX_C_SOURCE 200809L
-
-#include <errno.h>
 #include <limits.h>
-#include <stdbool.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
-#include <time.h>
-#include <unistd.h>
 
 #define WORD_LENGTH 8
 #define ALPHABET_SIZE 26
 #define DECIMAL_BASE 10
-#define DEFAULT_ITERATIONS 1LL
+#define DEFAULT_ITERATIONS 1U
 
 static const char* const DATA_DIR =
     "/home/pollee/os/os-course/lab/vtsh/bin/loaders/data";
 
 static const char* const OUT_DIR =
     "/home/pollee/os/os-course/lab/vtsh/bin/loaders/out";
-
-static void make_word(char* word, unsigned seed) {
-  static const unsigned LCG_MULTIPLIER = 1103515245U;
-  static const unsigned LCG_INCREMENT = 12345U;
-  for (int i = 0; i < WORD_LENGTH; i++) {
-    seed = seed * LCG_MULTIPLIER + LCG_INCREMENT;
-    word[i] = (char)('a' + (seed % ALPHABET_SIZE));
-  }
-  word[WORD_LENGTH] = '\0';
-}
 
 static void safe_fclose(FILE* stream, const char* what) {
   if (!stream) {
@@ -78,19 +60,11 @@ static int do_join_files(
     return 1;
   }
 
-  if (setvbuf(file_A, NULL, _IONBF, 0) != 0) {
-    perror("setvbuf file_A");
-  }
-
   FILE* file_B = fopen(pathB, "r");
   if (!file_B) {
     perror("fopen file_B");
     safe_fclose(file_A, "fclose file_A");
     return 1;
-  }
-
-  if (setvbuf(file_B, NULL, _IONBF, 0) != 0) {
-    perror("setvbuf file_B");
   }
 
   long long str_numb_A = 0;
@@ -146,10 +120,6 @@ static int do_join_files(
     return 1;
   }
 
-  if (setvbuf(file_out, NULL, _IONBF, 0) != 0) {
-    perror("setvbuf file_out");
-  }
-
   int print_result = fprintf(file_out, "%lld\n", matches);
   if (print_result < 0) {
     perror("fprintf matches");
@@ -195,7 +165,7 @@ static int do_join_files(
 }
 
 int main(int argc, char** argv) {
-  if (argc != 4) {
+  if (argc > 4) {
     int print_result =
         fprintf(stderr, "Usage: %s <fileA> <fileB> <iterations>\n", argv[0]);
     if (print_result < 0) {
@@ -204,8 +174,8 @@ int main(int argc, char** argv) {
 
     int print_result2 = fprintf(
         stderr,
-        "  fileA, fileB are basenames in %s\n"
-        "  iterations - positive integer\n",
+        "  fileA, fileB are basenames in %s \n"
+        "  iterations\n",
         DATA_DIR
     );
     if (print_result2 < 0) {
@@ -217,6 +187,7 @@ int main(int argc, char** argv) {
 
   const char* fileA_name = argv[1];
   const char* fileB_name = argv[2];
+
   long long iterations = DEFAULT_ITERATIONS;
 
   if (argc == 4) {

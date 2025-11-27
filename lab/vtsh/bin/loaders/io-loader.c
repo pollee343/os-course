@@ -1,18 +1,16 @@
 #define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 
-#define BYTES_PER_MEBIBYTE (1024.0 * 1024.0)
 #define DECIMAL_BASE 10
 #define BYTE_MASK_8BIT 0xFFu
 #define DIRECT_ALIGNMENT 4096u
@@ -198,14 +196,15 @@ static bool parse_args(int argc, char** argv, struct config* cfg) {
         return false;
       }
     } else if (strcmp(key, "iters") == 0) {
-      if (!parse_size_t(val, (size_t*)&cfg->iterations)) {
-        int print_result = fprintf(stderr, "Invalid iters: %s\n", val);
-        if (print_result < 0) {
-          perror("fprintf invalid iters");
-        }
+      size_t tmp = 0;
+      if (!parse_size_t(val, &tmp)) {
+        (void)fprintf(stderr, "Invalid iters: %s\n", val);
         return false;
       }
-    } else {
+      cfg->iterations = (long)tmp;
+    }
+
+    else {
       int print_result = fprintf(stderr, "Unknown argument key: %s\n", key);
       if (print_result < 0) {
         perror("fprintf unknown key");
@@ -257,6 +256,10 @@ int main(int argc, char** argv) {
     flags = (int)((unsigned)O_WRONLY | (unsigned)O_CREAT);
   }
 
+  if (cfg.use_direct) {
+    flags |= (unsigned)O_DIRECT;  // NOLINT(hicpp-signed-bitwise)
+  }
+
   const mode_t FILE_MODE = 0644;
   int file_descriptor = open(cfg.file_path, flags, FILE_MODE);
   if (file_descriptor < 0) {
@@ -297,119 +300,104 @@ int main(int argc, char** argv) {
       cfg.range_start = 0;
       cfg.range_end = file_size;
     }
-
-    if (cfg.range_end <= cfg.range_start) {
-      int print_result = fprintf(stderr, "Invalid range: end <= start\n");
-      if (print_result < 0) {
-        perror("Invalid range: end <= start");
-      }
-      close(file_descriptor);
-      return 1;
-    }
-
-    long range_len = cfg.range_end - cfg.range_start;
-    if (range_len < (long)cfg.block_size) {
-      int print_result = fprintf(stderr, "Range is smaller than block_size\n");
-      if (print_result < 0) {
-        perror("Range is smaller than block_size\n");
-      }
-      close(file_descriptor);
-      return 1;
-    }
-
-    long blocks_in_range = range_len / (long)cfg.block_size;
-    if (blocks_in_range <= 0) {
-      int print_result = fprintf(stderr, "blocks_in_range <= 0\n");
-      if (print_result < 0) {
-        perror("blocks_in_range <= 0");
-      }
-      close(file_descriptor);
-      return 1;
-    }
-
-    void* buf = NULL;
-    size_t alignment = cfg.use_direct ? DIRECT_ALIGNMENT : sizeof(void*);
-    if (posix_memalign(&buf, alignment, cfg.block_size) != 0) {
-      int print_result = fprintf(stderr, "posix_memalign failed\n");
-      if (print_result < 0) {
-        perror("posix_memalign failed\n");
-      }
-      close(file_descriptor);
-      return 1;
-    }
-
-    {
-      uint8_t* byte_buffer = (uint8_t*)buf;
-      for (size_t ind = 0; ind < cfg.block_size; ++ind) {
-        byte_buffer[ind] = (uint8_t)(ind & BYTE_MASK_8BIT);
-      }
-    }
-
-    const unsigned int seed1 = 123456U;
-    unsigned int seed = seed1;  // костыль, разобраться что не так
-
-    size_t total_blocks_done = 0;
-    size_t total_bytes = 0;
-
-    long current_block = 0;
-
-    for (size_t iter = 0; iter < (size_t)cfg.iterations; ++iter) {
-      for (size_t i = 0; i < cfg.block_count; ++i) {
-        long block_index = 0;
-
-        if (cfg.access_seq_or_random) {
-          block_index = current_block;
-          current_block++;
-          if (current_block >= blocks_in_range) {
-            current_block = 0;
-          }
-        } else {
-          block_index = (long)(rand_r(&seed) % (unsigned int)blocks_in_range);
-        }
-
-        long offset = cfg.range_start + block_index * (long)cfg.block_size;
-
-        ssize_t numb = 0;
-        if (cfg.rw) {
-          numb = pread(file_descriptor, buf, cfg.block_size, offset);
-        } else {
-          numb = pwrite(file_descriptor, buf, cfg.block_size, offset);
-        }
-
-        if (numb < 0) {
-          perror("pread/pwrite");
-          iter = (size_t)cfg.iterations;
-          break;
-        }
-        if ((size_t)numb < cfg.block_size) {
-          iter = (size_t)cfg.iterations;
-          break;
-        }
-
-        total_blocks_done++;
-        total_bytes += (size_t)numb;
-      }
-    }
-
-    free(buf);
-    close(file_descriptor);
-
-    printf(
-        "mode=%s access=%s direct=%s\n",
-        cfg.rw ? "read" : "write",
-        cfg.access_seq_or_random ? "sequence" : "random",
-        cfg.use_direct ? "on" : "off"
-    );
-    printf("file=%s\n", cfg.file_path);
-    printf("range=%jd-%jd\n", cfg.range_start, cfg.range_end);
-    printf(
-        "block_size=%zu block_count=%zu iterations=%ld\n",
-        cfg.block_size,
-        cfg.block_count,
-        cfg.iterations
-    );
-    printf("done_blocks=%zu bytes=%zu\n", total_blocks_done, total_bytes);
-
-    return 0;
   }
+
+  if ((cfg.range_end <= cfg.range_start) && (cfg.range_end != 0)) {
+    int print_result = fprintf(stderr, "Invalid range: end <= start\n");
+    if (print_result < 0) {
+      perror("Invalid range: end <= start");
+    }
+    close(file_descriptor);
+    return 1;
+  }
+
+  long range_len = cfg.range_end - cfg.range_start;
+
+  if (range_len < (long)cfg.block_size) {
+    (void)fprintf(
+        stderr,
+        "Range is smaller than block_size: file=\"%s\", range=%ld-%ld "
+        "(len=%ld), block_size=%zu\n",
+        cfg.file_path,
+        cfg.range_start,
+        cfg.range_end,
+        range_len,
+        cfg.block_size
+    );
+    close(file_descriptor);
+    return 1;
+  }
+
+  long blocks_in_range = range_len / (long)cfg.block_size;
+  if (blocks_in_range <= 0) {
+    int print_result = fprintf(stderr, "blocks_in_range <= 0\n");
+    if (print_result < 0) {
+      perror("blocks_in_range <= 0");
+    }
+    close(file_descriptor);
+    return 1;
+  }
+
+  void* buf = NULL;
+  size_t alignment = cfg.use_direct ? DIRECT_ALIGNMENT : sizeof(void*);
+  if (posix_memalign(&buf, alignment, cfg.block_size) != 0) {
+    int print_result = fprintf(stderr, "posix_memalign failed\n");
+    if (print_result < 0) {
+      perror("posix_memalign failed\n");
+    }
+    close(file_descriptor);
+    return 1;
+  }
+
+  {
+    uint8_t* byte_buffer = (uint8_t*)buf;
+    for (size_t ind = 0; ind < cfg.block_size; ++ind) {
+      byte_buffer[ind] = (uint8_t)(ind & BYTE_MASK_8BIT);
+    }
+  }
+
+  const unsigned int seed1 = 123456U;
+  unsigned int seed = seed1;  // костыль, разобраться что не так
+
+  long current_block = 0;
+
+  for (size_t iter = 0; iter < (size_t)cfg.iterations; ++iter) {
+    for (size_t i = 0; i < cfg.block_count; ++i) {
+      long block_index = 0;
+
+      if (cfg.access_seq_or_random) {
+        block_index = current_block;
+        current_block++;
+        if (current_block >= blocks_in_range) {
+          current_block = 0;
+        }
+      } else {
+        block_index = (long)(rand_r(&seed) % (unsigned int)blocks_in_range);
+      }
+
+      long offset = cfg.range_start + block_index * (long)cfg.block_size;
+
+      ssize_t numb = 0;
+      if (cfg.rw) {
+        numb = pread(file_descriptor, buf, cfg.block_size, offset);
+      } else {
+        numb = pwrite(file_descriptor, buf, cfg.block_size, offset);
+      }
+
+      if (numb < 0) {
+        perror("pread/pwrite");
+        iter = (size_t)cfg.iterations;
+        break;
+      }
+      if ((size_t)numb < cfg.block_size) {
+        iter = (size_t)cfg.iterations;
+        break;
+      }
+    }
+  }
+
+  free(buf);
+  close(file_descriptor);
+
+  return 0;
 }
